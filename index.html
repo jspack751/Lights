@@ -59,6 +59,20 @@ input[type=range]{width:100%;accent-color:var(--glow);height:32px}
 select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 4px}
 .log{font:400 11px/1.5 var(--mono);color:var(--muted);white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;max-height:200px;overflow:auto}
 .hint{font-size:13px;color:var(--muted)}
+.mine{width:100%;padding:16px;font:700 17px var(--display);border-radius:16px;background:var(--ok);color:#06210f;border-color:transparent}
+.mine[disabled]{opacity:.55}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.seg button[aria-pressed=true]{background:var(--fg);color:#111;border-color:transparent;font-weight:600}
+.meter{height:8px;border-radius:4px;background:#22252d;overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--glow);transition:width 60ms linear}
+.track{display:flex;gap:10px;align-items:center;min-height:0}
+.track img{width:44px;height:44px;border-radius:8px;object-fit:cover}
+.track .t{font-size:13px;line-height:1.3}
+.track .t b{display:block;font-size:14px}
+.pal{display:flex;gap:6px}.pal span{width:22px;height:22px;border-radius:50%}
+input[type=text]{font:inherit;font-size:14px;background:#22252d;color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
+#musicGo[aria-pressed=true]{background:var(--glow);color:#111;border-color:transparent}
 </style>
 </head>
 <body>
@@ -74,12 +88,13 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
 
   <section class="card" aria-label="Lights">
     <div class="label">Lights</div>
+    <button class="mine" id="mine" hidden>Connect my lights</button>
     <div class="lights" id="lights"></div>
     <div class="add">
       <button class="primary" id="addLight">+ Add light</button>
       <button id="addAny" title="Shows every Bluetooth device nearby">Show all</button>
     </div>
-    <div class="hint">Tap Add light once for each controller (MELK, ELK-BLEDOM, ELK-BLEDOM0F…). If a set shows the wrong colors, change its color order.</div>
+    <div class="hint">Lights you add are remembered. Next time, tap <b>Connect my lights</b>. Use Add light for anything new.</div>
   </section>
 
   <section class="power" aria-label="Power">
@@ -104,15 +119,36 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
     </div>
   </section>
 
+  <section class="card" aria-label="Music mode">
+    <div class="label">Music mode</div>
+    <div class="seg" role="group" aria-label="Color source">
+      <button id="srcRainbow" aria-pressed="true">Rainbow colors</button>
+      <button id="srcSpotify" aria-pressed="false">Spotify album colors</button>
+    </div>
+    <div id="spotBox" hidden>
+      <div id="spotLogin" hidden>
+        <label class="hint" for="spotId">Spotify Client ID (from developer.spotify.com)</label>
+        <div class="row2" style="margin-top:6px"><input type="text" id="spotId" autocomplete="off" spellcheck="false" placeholder="32-character ID"><button id="spotConnect">Log in to Spotify</button></div>
+      </div>
+      <div class="track" id="track"></div>
+    </div>
+    <button id="musicGo" aria-pressed="false">Start music mode (uses mic)</button>
+    <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+    <div class="bright"><span class="hint" style="width:90px">Sensitivity</span><input type="range" id="sens" min="1" max="10" value="6" aria-label="Beat sensitivity"></div>
+    <div class="hint">The mic listens to whatever's playing. Spotify mode pulls colors from the current song's album art.</div>
+  </section>
+
   <div class="log" id="log" role="status"></div>
 </main>
 
 <script>
 (() => {
   const PRESETS = ["#ff2a2a","#ff7a00","#ffd400","#2aff4a","#00d5ff","#2a4bff","#a52aff","#ff2ad0","#ffffff","#ffb46b","#ff5f8a","#7affc8"];
+  const RAINBOW = ["#ff2a2a","#ff7a00","#ffd400","#2aff4a","#00d5ff","#2a4bff","#a52aff","#ff2ad0"];
   const ORDERS = {RGB:[0,1,2],GRB:[1,0,2],BRG:[2,0,1],RBG:[0,2,1],GBR:[1,2,0],BGR:[2,1,0]};
   const U = n => "0000" + n.toString(16).padStart(4,"0") + "-0000-1000-8000-00805f9b34fb";
   const PROFILES = [[U(0xfff0),U(0xfff3)],[U(0xffe0),U(0xffe1)],[U(0xffd5),U(0xffd9)]];
+  const SERVICES = PROFILES.map(p => p[0]);
   const PREFIXES = ["MELK","ELK","LEDBLE","Triones","QHM","BLE-LED"];
   const $ = s => document.querySelector(s);
   const log = m => {
@@ -122,25 +158,51 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
   window.addEventListener("error", e => log("JS error: " + e.message));
   window.addEventListener("unhandledrejection", e => log("Error: " + (e.reason && (e.reason.name + ": " + e.reason.message) || e.reason)));
 
-  // per-browser saved settings
+  // ---------- saved settings ----------
+  const KEY = "bothlights3";
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem("bothlights3") || "{}"); } catch {}
-  const state = Object.assign({color:"#ff3b3b", bright:100, perName:{}}, saved);
-  const save = () => { try { localStorage.setItem("bothlights3", JSON.stringify({color:state.color,bright:state.bright,perName:state.perName})); } catch {} };
+  try { saved = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch {}
+  const state = Object.assign({color:"#ff3b3b", bright:100, perName:{}, mine:[], spotId:"", sens:6, src:"rainbow"}, saved);
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify({color:state.color,bright:state.bright,perName:state.perName,mine:state.mine,spotId:state.spotId,sens:state.sens,src:state.src})); } catch {} };
+  const ls = {get:k=>{try{return localStorage.getItem(k)}catch{return null}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch{}}, del:k=>{try{localStorage.removeItem(k)}catch{}}};
 
   if (!navigator.bluetooth) $("#nobt").hidden = false;
 
   // ---------- lights ----------
   const lights = []; // {id, device, name, char, queue, pending, pendingBytes, state}
   let nextId = 1;
-
   const defaultOrder = name => /^MELK/i.test(name || "") ? "GRB" : "RGB";
   const prefs = l => (state.perName[l.name] ||= {order: defaultOrder(l.name), link: true});
+
+  // "My lights" = the ones you always use, remembered by device id + name
+  const isMine = d => state.mine.some(m => m.id === d.id || (m.name && m.name === d.name));
+  function remember(l){
+    if (isMine(l.device)) { const m = state.mine.find(m => m.id === l.device.id || m.name === l.name); m.id = l.device.id; m.name = l.name; }
+    else state.mine.push({id: l.device.id, name: l.name});
+    save(); renderMine();
+  }
+  const connectedMine = () => state.mine.filter(m => lights.some(l => l.state === "on" && (l.device.id === m.id || l.name === m.name)));
+  const missingMine = () => state.mine.filter(m => !connectedMine().includes(m));
+
+  function renderMine(){
+    const b = $("#mine");
+    b.hidden = !state.mine.length;
+    if (!state.mine.length) return;
+    const miss = missingMine();
+    b.disabled = !miss.length;
+    if (!miss.length) b.textContent = `All ${state.mine.length} connected ✓`;
+    else if (miss.length === state.mine.length) b.textContent = `Connect my ${state.mine.length} lights`;
+    else b.textContent = `Connect ${miss[0].name} (${miss.length} left)`;
+  }
 
   function render(){
     const box = $("#lights");
     box.innerHTML = "";
-    if (!lights.length) { box.innerHTML = '<div class="empty">No lights yet. Tap Add light.</div>'; return; }
+    if (!lights.length) {
+      box.innerHTML = state.mine.length
+        ? '<div class="empty">Your lights aren\'t connected yet.</div>'
+        : '<div class="empty">No lights yet. Tap Add light.</div>';
+    }
     lights.forEach(l => {
       const p = prefs(l);
       const row = document.createElement("div");
@@ -151,7 +213,7 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
           <label class="link"><input type="checkbox" ${p.link?"checked":""}> on</label>
           <select aria-label="Color order">${Object.keys(ORDERS).map(o=>`<option ${o===p.order?"selected":""}>${o}</option>`).join("")}</select>
           ${l.state==="off" ? '<button class="sm" data-act="re">Reconnect</button>' : ''}
-          <button class="sm" data-act="rm" aria-label="Remove">✕</button>
+          <button class="sm" data-act="rm" aria-label="Remove and forget">✕</button>
         </div>`;
       row.querySelector(".name").textContent = l.name || "Unnamed light";
       row.querySelector("input").onchange = e => { p.link = e.target.checked; save(); };
@@ -159,10 +221,14 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
       const re = row.querySelector('[data-act=re]'); if (re) re.onclick = () => attach(l).catch(err => fail(l, err));
       row.querySelector('[data-act=rm]').onclick = () => {
         try { l.device.gatt.disconnect(); } catch {}
-        lights.splice(lights.indexOf(l), 1); render();
+        lights.splice(lights.indexOf(l), 1);
+        state.mine = state.mine.filter(m => m.id !== l.device.id && m.name !== l.name); save();
+        log(`${l.name}: removed and forgotten.`);
+        render();
       };
       box.appendChild(row);
     });
+    renderMine();
   }
 
   function fail(l, e){
@@ -184,7 +250,18 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
     if (!l.char) throw new Error("Connected, but couldn't find the control channel.");
     l.state = "on"; render();
     log(`${l.name}: connected.`);
+    remember(l);
     sendColor(l);
+  }
+
+  function adopt(device){
+    let l = lights.find(x => x.device.id === device.id);
+    if (!l) {
+      l = {id: nextId++, device, name: device.name || ("Light " + nextId), char:null, queue:Promise.resolve(), pending:null, pendingBytes:null, state:"off"};
+      lights.push(l);
+      device.addEventListener("gattserverdisconnected", () => { l.char = null; l.state = "off"; render(); log(`${l.name}: disconnected.`); });
+    }
+    return l;
   }
 
   async function addLight(any){
@@ -192,19 +269,48 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
     let device;
     try {
       device = await navigator.bluetooth.requestDevice(any
-        ? {acceptAllDevices:true, optionalServices: PROFILES.map(p => p[0])}
-        : {filters: PREFIXES.map(p => ({namePrefix:p})), optionalServices: PROFILES.map(p => p[0])});
+        ? {acceptAllDevices:true, optionalServices: SERVICES}
+        : {filters: PREFIXES.map(p => ({namePrefix:p})), optionalServices: SERVICES});
     } catch (e) { log(e.name === "NotFoundError" ? "Picker closed, nothing added." : "Picker error: " + e.name + ": " + e.message); return; }
-    let l = lights.find(x => x.device.id === device.id);
-    if (l) { log(`${l.name} is already in the list.`); if (l.state === "on") return; }
-    else {
-      l = {id: nextId++, device, name: device.name || ("Light " + nextId), char:null, queue:Promise.resolve(), pending:null, pendingBytes:null, state:"off"};
-      lights.push(l);
-      device.addEventListener("gattserverdisconnected", () => { l.char = null; l.state = "off"; render(); log(`${l.name}: disconnected.`); });
-    }
+    const l = adopt(device);
+    if (l.state === "on") { log(`${l.name} is already connected.`); return; }
     try { await attach(l); } catch (e) { fail(l, e); }
   }
 
+  // Silent reconnect: works where the browser remembers permitted devices (getDevices)
+  async function silentReconnect(){
+    if (!navigator.bluetooth || !navigator.bluetooth.getDevices || !state.mine.length) return 0;
+    let devs = [];
+    try { devs = await navigator.bluetooth.getDevices(); } catch { return 0; }
+    const todo = devs.filter(d => isMine(d) && !lights.some(l => l.device.id === d.id && l.state === "on"));
+    await Promise.all(todo.map(async d => { const l = adopt(d); try { await attach(l); } catch (e) { fail(l, e); } }));
+    return todo.length;
+  }
+
+  // The "Connect my lights" button
+  async function connectMine(){
+    if (!navigator.bluetooth) { log("Open this page in Bluefy to use Bluetooth."); return; }
+    // reconnect any we already have a handle to (no picker needed)
+    const known = lights.filter(l => l.state === "off" && isMine(l.device));
+    await Promise.all(known.map(l => attach(l).catch(e => fail(l, e))));
+    await silentReconnect();
+    const miss = missingMine();
+    if (!miss.length) { log("All your lights are connected."); return; }
+    // iPhone needs one picker tap per light; the picker only shows that exact light
+    const m = miss[0];
+    let device;
+    try {
+      device = await navigator.bluetooth.requestDevice({filters:[{name: m.name}], optionalServices: SERVICES});
+    } catch (e) {
+      log(e.name === "NotFoundError" ? `${m.name} not found. Is it plugged in, and are the other light apps closed?` : "Picker error: " + e.name + ": " + e.message);
+      return;
+    }
+    const l = adopt(device);
+    try { await attach(l); } catch (e) { fail(l, e); }
+    if (missingMine().length) log(`Tap the green button again for ${missingMine()[0].name}.`);
+  }
+
+  // ---------- writing ----------
   function write(l, bytes){
     if (!l.char) return;
     const data = new Uint8Array(bytes);
@@ -222,9 +328,9 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
     l.pending = setTimeout(() => { l.pending = null; if (l.pendingBytes) { const f = l.pendingBytes; l.pendingBytes = null; throttled(l, f); } }, 70);
   }
   const targets = () => lights.filter(l => l.char && prefs(l).link);
-  function rgbBytes(l){
-    const h = state.color.replace("#","");
-    const c = [0,2,4].map(i => Math.round(parseInt(h.substr(i,2),16) * state.bright/100));
+  function rgbBytes(l, color = state.color, bright = state.bright){
+    const h = color.replace("#","");
+    const c = [0,2,4].map(i => Math.round(parseInt(h.substr(i,2),16) * bright/100));
     const o = ORDERS[prefs(l).order] || ORDERS.RGB;
     const out = [0,0,0]; out[o[0]] = c[0]; out[o[1]] = c[1]; out[o[2]] = c[2];
     return [0x7E,0x00,0x05,0x03,out[0],out[1],out[2],0x00,0xEF];
@@ -232,14 +338,14 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
   const sendColor = l => throttled(l, () => rgbBytes(l));
   const ON  = [0x7E,0x00,0x04,0xF0,0x00,0x01,0xFF,0x00,0xEF];
   const OFF = [0x7E,0x00,0x04,0x00,0x00,0x00,0xFF,0x00,0xEF];
-  const needLights = () => { if (!targets().length) { log("No connected lights. Tap Add light first."); return true; } };
+  const needLights = () => { if (!targets().length) { log("No connected lights. Tap Connect my lights first."); return true; } };
 
   // ---------- UI ----------
   const sw = $("#swatches");
   PRESETS.forEach(c => {
     const b = document.createElement("button");
     b.className = "sw"; b.style.background = c; b.setAttribute("aria-label","Color "+c); b.dataset.c = c;
-    b.onclick = () => setColor(c);
+    b.onclick = () => { stopMusic(); setColor(c); };
     sw.appendChild(b);
   });
   function paint(){
@@ -251,17 +357,194 @@ select{font:inherit;font-size:12px;background:#22252d;color:var(--fg);border:1px
   }
   function setColor(c){ state.color = c.toLowerCase(); paint(); targets().forEach(sendColor); save(); }
 
-  $("#color").addEventListener("input", e => setColor(e.target.value));
+  $("#color").addEventListener("input", e => { stopMusic(); setColor(e.target.value); });
   $("#bright").addEventListener("input", e => { state.bright = +e.target.value; paint(); targets().forEach(sendColor); save(); });
   $("#on").onclick  = () => { if (needLights()) return; targets().forEach(l => { write(l, ON); sendColor(l); }); };
-  $("#off").onclick = () => { if (needLights()) return; targets().forEach(l => write(l, OFF)); };
+  $("#off").onclick = () => { stopMusic(); if (needLights()) return; targets().forEach(l => write(l, OFF)); };
   $("#addLight").onclick = () => addLight(false);
   $("#addAny").onclick = () => addLight(true);
+  $("#mine").onclick = () => connectMine();
 
+  // ---------- music mode (mic) ----------
+  let audio = null; // {ctx, stream, an, buf, raf}
+  let palette = RAINBOW.slice(), palIdx = 0, level = 30, avg = 0, lastBeat = 0;
+  $("#sens").value = state.sens;
+  $("#sens").oninput = e => { state.sens = +e.target.value; save(); };
+
+  async function startMusic(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { log("This browser can't use the mic. In Bluefy, allow Microphone in Settings → Bluefy."); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    } catch (e) { log("Mic blocked: " + e.name + ". Allow Microphone for this browser in Settings."); return; }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.5;
+    ctx.createMediaStreamSource(stream).connect(an);
+    audio = {ctx, stream, an, buf: new Uint8Array(an.frequencyBinCount), raf: 0};
+    $("#musicGo").setAttribute("aria-pressed","true"); $("#musicGo").textContent = "Stop music mode";
+    log("Music mode on. Play something nearby.");
+    targets().forEach(l => write(l, ON));
+    tick();
+  }
+  function stopMusic(){
+    if (!audio) return;
+    cancelAnimationFrame(audio.raf);
+    audio.stream.getTracks().forEach(t => t.stop());
+    audio.ctx.close().catch(()=>{});
+    audio = null;
+    $("#musicGo").setAttribute("aria-pressed","false"); $("#musicGo").textContent = "Start music mode (uses mic)";
+    $("#meter").style.width = "0";
+    log("Music mode off.");
+    targets().forEach(sendColor);
+  }
+  function tick(){
+    if (!audio) return;
+    const {an, buf, ctx} = audio;
+    an.getByteFrequencyData(buf);
+    // bass band ≈ 40–180 Hz
+    const hz = ctx.sampleRate / an.fftSize;
+    const lo = Math.max(1, Math.floor(40/hz)), hi = Math.ceil(180/hz);
+    let e = 0; for (let i = lo; i <= hi; i++) e += buf[i]; e /= (hi - lo + 1);
+    avg = avg ? avg * 0.94 + e * 0.06 : e;
+    const now = performance.now();
+    const thresh = 1.6 - state.sens * 0.06; // sensitivity 1..10 → 1.54..1.0
+    if (e > avg * thresh && e > 40 && now - lastBeat > 200) {
+      lastBeat = now; level = 100;
+      palIdx = (palIdx + 1) % palette.length;
+    } else {
+      level = Math.max(22, level * 0.9);
+    }
+    $("#meter").style.width = Math.min(100, e / 2.55) + "%";
+    const c = palette[palIdx];
+    document.documentElement.style.setProperty("--glow", c);
+    const b = Math.round(level * state.bright / 100);
+    targets().forEach(l => throttled(l, () => rgbBytes(l, c, b)));
+    audio.raf = requestAnimationFrame(tick);
+  }
+  $("#musicGo").onclick = () => audio ? stopMusic() : startMusic();
+
+  // ---------- Spotify (album-art colors) ----------
+  const SP = {tok:"sp_tok", ref:"sp_ref", exp:"sp_exp", ver:"sp_ver"};
+  const redirect = location.origin + location.pathname;
+  let spotTimer = 0, lastTrack = "";
+
+  function setSrc(src){
+    state.src = src; save();
+    $("#srcRainbow").setAttribute("aria-pressed", src === "rainbow");
+    $("#srcSpotify").setAttribute("aria-pressed", src === "spotify");
+    $("#spotBox").hidden = src !== "spotify";
+    clearInterval(spotTimer);
+    if (src === "rainbow") { palette = RAINBOW.slice(); palIdx = 0; return; }
+    $("#spotId").value = state.spotId || "";
+    $("#spotLogin").hidden = !!ls.get(SP.ref);
+    if (ls.get(SP.ref)) { pollSpotify(); spotTimer = setInterval(pollSpotify, 5000); }
+    else $("#track").innerHTML = '<span class="hint">Log in once and the colors follow whatever song is playing.</span>';
+  }
+  $("#srcRainbow").onclick = () => setSrc("rainbow");
+  $("#srcSpotify").onclick = () => setSrc("spotify");
+
+  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  $("#spotConnect").onclick = async () => {
+    const id = $("#spotId").value.trim();
+    if (!/^[0-9a-f]{32}$/i.test(id)) { log("That doesn't look like a Spotify Client ID (32 letters and numbers)."); return; }
+    state.spotId = id; save();
+    const ver = b64url(crypto.getRandomValues(new Uint8Array(48)));
+    ls.set(SP.ver, ver);
+    const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ver)));
+    const q = new URLSearchParams({client_id:id, response_type:"code", redirect_uri:redirect, scope:"user-read-currently-playing user-read-playback-state", code_challenge_method:"S256", code_challenge:challenge});
+    location.href = "https://accounts.spotify.com/authorize?" + q;
+  };
+
+  async function tokenCall(params){
+    const r = await fetch("https://accounts.spotify.com/api/token", {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:new URLSearchParams(Object.assign({client_id:state.spotId}, params))});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error_description || j.error || r.status);
+    ls.set(SP.tok, j.access_token); ls.set(SP.exp, String(Date.now() + (j.expires_in - 60) * 1000));
+    if (j.refresh_token) ls.set(SP.ref, j.refresh_token);
+  }
+  async function token(){
+    if (ls.get(SP.tok) && Date.now() < +ls.get(SP.exp)) return ls.get(SP.tok);
+    await tokenCall({grant_type:"refresh_token", refresh_token:ls.get(SP.ref)});
+    return ls.get(SP.tok);
+  }
+  async function finishLogin(){
+    const q = new URLSearchParams(location.search);
+    if (!q.has("code") && !q.has("error")) return;
+    history.replaceState(null, "", redirect);
+    if (q.has("error")) { log("Spotify login cancelled: " + q.get("error")); return; }
+    try {
+      await tokenCall({grant_type:"authorization_code", code:q.get("code"), redirect_uri:redirect, code_verifier:ls.get(SP.ver)});
+      log("Spotify connected.");
+      state.src = "spotify"; save();
+    } catch (e) { log("Spotify login failed: " + e.message); }
+  }
+  async function pollSpotify(){
+    try {
+      const r = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {headers:{Authorization:"Bearer " + await token()}});
+      if (r.status === 204) { $("#track").innerHTML = '<span class="hint">Nothing playing on Spotify right now.</span>'; return; }
+      if (r.status === 401) { ls.del(SP.tok); return; }
+      if (!r.ok) { log("Spotify: " + r.status); return; }
+      const j = await r.json(); const it = j.item;
+      if (!it || it.id === lastTrack) return;
+      lastTrack = it.id;
+      const img = (it.album && it.album.images || []).slice(-2)[0];
+      const box = $("#track"); box.innerHTML = "";
+      if (img) { const im = document.createElement("img"); im.alt = ""; im.src = img.url; box.appendChild(im); }
+      const t = document.createElement("div"); t.className = "t";
+      t.innerHTML = "<b></b><span></span><div class='pal'></div>";
+      t.querySelector("b").textContent = it.name;
+      t.querySelector("span").textContent = (it.artists || []).map(a => a.name).join(", ");
+      box.appendChild(t);
+      if (img) {
+        const cols = await albumColors(img.url);
+        if (cols.length) { palette = cols; palIdx = 0; t.querySelector(".pal").innerHTML = cols.map(c => `<span style="background:${c}"></span>`).join(""); }
+        if (!audio) setColor(palette[0]);
+      }
+    } catch (e) { log("Spotify: " + e.message); }
+  }
+  // pick 4 vivid, distinct colors from the album art
+  function albumColors(url){
+    return new Promise(res => {
+      const im = new Image(); im.crossOrigin = "anonymous";
+      im.onload = () => {
+        try {
+          const cv = document.createElement("canvas"); cv.width = cv.height = 48;
+          const g = cv.getContext("2d"); g.drawImage(im, 0, 0, 48, 48);
+          const d = g.getImageData(0, 0, 48, 48).data, buckets = {};
+          for (let i = 0; i < d.length; i += 4) {
+            const [r,gg,b] = [d[i],d[i+1],d[i+2]], mx = Math.max(r,gg,b), mn = Math.min(r,gg,b);
+            const sat = mx ? (mx-mn)/mx : 0;
+            if (mx < 50 || sat < 0.25) continue;
+            const k = (r>>5)+","+(gg>>5)+","+(b>>5);
+            const bk = buckets[k] ||= {n:0,r:0,g:0,b:0,s:0}; bk.n++; bk.r+=r; bk.g+=gg; bk.b+=b; bk.s+=sat;
+          }
+          const list = Object.values(buckets).map(bk => ({c:[bk.r/bk.n,bk.g/bk.n,bk.b/bk.n], score:bk.n*(bk.s/bk.n)})).sort((a,b) => b.score - a.score);
+          const out = [];
+          for (const it of list) {
+            if (out.every(o => Math.hypot(o[0]-it.c[0], o[1]-it.c[1], o[2]-it.c[2]) > 90)) out.push(it.c);
+            if (out.length === 4) break;
+          }
+          // boost to full brightness so the LEDs show the hue, not a dim version
+          res(out.map(c => { const m = Math.max(...c) || 1; return "#" + c.map(v => Math.round(v*255/m).toString(16).padStart(2,"0")).join(""); }));
+        } catch { res([]); }
+      };
+      im.onerror = () => res([]);
+      im.src = url;
+    });
+  }
+
+  // ---------- start ----------
   paint(); render();
-  log("v3 loaded.");
+  log("v4 loaded.");
+  finishLogin().then(() => setSrc(state.src));
   if (!navigator.bluetooth) log("No Bluetooth in this browser. Open the page in Bluefy.");
-  else log("Close the light apps and nRF Connect, then tap Add light for each controller.");
+  else if (state.mine.length) {
+    silentReconnect().then(n => {
+      if (n) log("Reconnected your saved lights.");
+      else if (missingMine().length) log("Tap Connect my lights to reconnect your " + state.mine.length + ".");
+    });
+  } else log("Close the light apps and nRF Connect, then tap Add light for each controller.");
 })();
 </script>
 </body>
