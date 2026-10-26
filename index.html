@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e0f13">
+<title>Both Lights</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one-column phone remote — status strip, big power, color, brightness, per-set cards */
+:root{
+  --bg:#0e0f13; --panel:#17191f; --line:#272a33; --fg:#eceef3; --muted:#8a8f9c;
+  --glow:#ff3b3b; --ok:#3ddc84; --warn:#ffb020;
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,sans-serif}
+body{padding:env(safe-area-inset-top,0) max(16px,env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0)) max(16px,env(safe-area-inset-left,0px))}
+main{max-width:460px;margin:0 auto;display:flex;flex-direction:column;gap:18px;padding-top:18px}
+header{display:flex;align-items:baseline;justify-content:space-between}
+h1{font:700 28px/1 var(--display);margin:0;letter-spacing:-.02em}
+.hex{font:600 13px var(--mono);color:var(--muted)}
+.banner{background:#2a2110;border:1px solid #5a4410;color:#ffd27a;border-radius:12px;padding:12px 14px;font-size:14px}
+.banner b{color:#fff}
+.sets{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.set{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.set .top{display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;background:#444;flex:none}
+.set[data-state=on] .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.set[data-state=busy] .dot{background:var(--warn)}
+.set .name{font:500 15px var(--display)}
+.set .sub{font:400 11px var(--mono);color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+button{font:inherit;color:inherit;background:#22252d;border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;touch-action:manipulation}
+button:active{transform:scale(.97)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.connect{width:100%;font-weight:600}
+.set[data-state=on] .connect{background:transparent;color:var(--muted)}
+label.link{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.power{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.power button{padding:18px;font:700 18px var(--display);border-radius:16px}
+#on{background:var(--glow);color:#111;border-color:transparent;box-shadow:0 0 28px -6px var(--glow)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.label{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.sw{aspect-ratio:1;border-radius:50%;border:2px solid transparent;padding:0}
+.sw[aria-pressed=true]{border-color:var(--fg)}
+.picker{display:flex;gap:10px;align-items:center}
+input[type=color]{width:56px;height:44px;border:1px solid var(--line);border-radius:12px;background:none;padding:2px}
+input[type=range]{width:100%;accent-color:var(--glow);height:32px}
+.bright{display:flex;gap:10px;align-items:center}
+.bright output{font:600 13px var(--mono);width:44px;text-align:right}
+select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 6px}
+.log{font:400 11px var(--mono);color:var(--muted);min-height:1.4em}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Both Lights</h1>
+    <span class="hex" id="hexOut">#FF3B3B</span>
+  </header>
+
+  <div class="banner" id="nobt" hidden>
+    This browser can't talk to Bluetooth. On iPhone, open this page in the free <b>Bluefy</b> app. On Android, use Chrome.
+  </div>
+
+  <section class="sets" aria-label="Light sets">
+    <div class="set" id="set-magic" data-state="off">
+      <div class="top"><span class="dot"></span><div><div class="name">Magic Lantern</div><div class="sub">MELK · GRB</div></div></div>
+      <button class="connect" data-dev="magic">Connect</button>
+      <div class="row">
+        <label class="link"><input type="checkbox" data-link="magic" checked> Linked</label>
+        <select data-order="magic" aria-label="Magic Lantern color order"><option>RGB</option><option selected>GRB</option><option>BRG</option><option>RBG</option><option>GBR</option><option>BGR</option></select>
+      </div>
+    </div>
+    <div class="set" id="set-lotus" data-state="off">
+      <div class="top"><span class="dot"></span><div><div class="name">Lotus Lantern</div><div class="sub">ELK-BLEDOM · RGB</div></div></div>
+      <button class="connect" data-dev="lotus">Connect</button>
+      <div class="row">
+        <label class="link"><input type="checkbox" data-link="lotus" checked> Linked</label>
+        <select data-order="lotus" aria-label="Lotus Lantern color order"><option selected>RGB</option><option>GRB</option><option>BRG</option><option>RBG</option><option>GBR</option><option>BGR</option></select>
+      </div>
+    </div>
+  </section>
+
+  <section class="power" aria-label="Power">
+    <button id="on">On</button>
+    <button id="off">Off</button>
+  </section>
+
+  <section class="card" aria-label="Color">
+    <div class="label">Color</div>
+    <div class="swatches" id="swatches"></div>
+    <div class="picker">
+      <input type="color" id="color" value="#ff3b3b" aria-label="Custom color">
+      <span class="sub" style="color:var(--muted);font-size:13px">Custom color. Drag to change both sets live.</span>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Brightness">
+    <div class="label">Brightness</div>
+    <div class="bright">
+      <input type="range" id="bright" min="1" max="100" value="100" aria-label="Brightness">
+      <output id="brightOut">100%</output>
+    </div>
+  </section>
+
+  <div class="log" id="log" role="status"></div>
+</main>
+
+<script>
+(() => {
+  const PRESETS = ["#ff2a2a","#ff7a00","#ffd400","#2aff4a","#00d5ff","#2a4bff","#a52aff","#ff2ad0","#ffffff","#ffb46b","#ff5f8a","#7affc8"];
+  const ORDERS = {RGB:[0,1,2],GRB:[1,0,2],BRG:[2,0,1],RBG:[0,2,1],GBR:[1,2,0],BGR:[2,1,0]};
+  const PROFILES = [ // service, write characteristic
+    [0xfff0, 0xfff3],
+    [0xffe0, 0xffe1],
+    [0xffd5, 0xffd9],
+  ];
+  const DEV = {
+    magic:{prefix:["MELK","ELK-BLE"], order:"GRB", link:true},
+    lotus:{prefix:["ELK-BLEDOM","ELK"], order:"RGB", link:true},
+  };
+  const $ = s => document.querySelector(s);
+  const log = m => { $("#log").textContent = m; };
+
+  // saved settings (per-browser convenience only)
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("bothlights") || "{}"); } catch {}
+  const save = () => { try { localStorage.setItem("bothlights", JSON.stringify(state)); } catch {} };
+  const state = Object.assign({color:"#ff3b3b", bright:100, orders:{magic:"GRB",lotus:"RGB"}, links:{magic:true,lotus:true}}, saved);
+
+  if (!navigator.bluetooth) $("#nobt").hidden = false;
+
+  // ---------- BLE ----------
+  for (const key of Object.keys(DEV)) {
+    const d = DEV[key];
+    d.char = null; d.device = null; d.queue = Promise.resolve(); d.pending = null;
+  }
+
+  function setUI(key, s){ document.getElementById("set-"+key).dataset.state = s;
+    document.querySelector(`[data-dev=${key}]`).textContent = s==="on" ? "Connected" : s==="busy" ? "Connecting…" : "Connect"; }
+
+  async function attach(key){
+    const d = DEV[key];
+    setUI(key,"busy");
+    const server = await d.device.gatt.connect();
+    for (const [svc, ch] of PROFILES) {
+      try { const s = await server.getPrimaryService(svc); d.char = await s.getCharacteristic(ch); break; } catch {}
+    }
+    if (!d.char) throw new Error("Connected, but couldn't find the light's control channel.");
+    setUI(key,"on");
+    log(`${key==="magic"?"Magic":"Lotus"} Lantern connected.`);
+    // bring it in sync with the current controls
+    sendColor(key);
+  }
+
+  async function connect(key){
+    const d = DEV[key];
+    if (!navigator.bluetooth) { log("Open this page in Bluefy to use Bluetooth."); return; }
+    if (d.char) return;
+    try {
+      if (!d.device) {
+        d.device = await navigator.bluetooth.requestDevice({
+          filters: d.prefix.map(p => ({namePrefix:p})),
+          optionalServices: PROFILES.map(p => p[0]),
+        });
+        d.device.addEventListener("gattserverdisconnected", () => {
+          d.char = null; setUI(key,"off"); log(`${key==="magic"?"Magic":"Lotus"} Lantern disconnected. Tap Connect to reconnect.`);
+        });
+      }
+      await attach(key);
+    } catch (e) {
+      setUI(key,"off");
+      if (e && e.name === "NotFoundError") log("No light picked.");
+      else log((e && e.message) || "Couldn't connect. Make sure the official app is fully closed.");
+    }
+  }
+
+  function write(key, bytes){
+    const d = DEV[key];
+    if (!d.char) return;
+    const data = new Uint8Array(bytes);
+    d.queue = d.queue.then(() => (d.char.writeValueWithoutResponse
+      ? d.char.writeValueWithoutResponse(data) : d.char.writeValue(data))).catch(() => {});
+  }
+
+  // throttle so dragging the slider/picker doesn't flood the controller
+  function throttled(key, makeBytes){
+    const d = DEV[key];
+    if (d.pending) { d.pendingBytes = makeBytes; return; }
+    write(key, makeBytes());
+    d.pending = setTimeout(() => { d.pending = null; if (d.pendingBytes){ const f=d.pendingBytes; d.pendingBytes=null; throttled(key,f);} }, 70);
+  }
+
+  const targets = () => Object.keys(DEV).filter(k => state.links[k]);
+
+  function rgbBytes(key){
+    const h = state.color.replace("#","");
+    const c = [0,2,4].map(i => parseInt(h.substr(i,2),16));
+    const s = state.bright/100;
+    const scaled = c.map(v => Math.round(v*s));
+    const o = ORDERS[state.orders[key]] || ORDERS.RGB;
+    // o tells which source channel goes into each byte slot the controller expects
+    const out = [0,0,0];
+    out[o[0]] = scaled[0]; out[o[1]] = scaled[1]; out[o[2]] = scaled[2];
+    return [0x7E,0x00,0x05,0x03,out[0],out[1],out[2],0x00,0xEF];
+  }
+  function sendColor(key){ throttled(key, () => rgbBytes(key)); }
+  const ON  = [0x7E,0x00,0x04,0xF0,0x00,0x01,0xFF,0x00,0xEF];
+  const OFF = [0x7E,0x00,0x04,0x00,0x00,0x00,0xFF,0x00,0xEF];
+
+  // ---------- UI ----------
+  const sw = $("#swatches");
+  PRESETS.forEach(c => {
+    const b = document.createElement("button");
+    b.className="sw"; b.style.background=c; b.setAttribute("aria-label","Color "+c); b.dataset.c=c;
+    b.onclick = () => setColor(c);
+    sw.appendChild(b);
+  });
+
+  function paint(){
+    $("#color").value = state.color;
+    $("#hexOut").textContent = state.color.toUpperCase();
+    document.documentElement.style.setProperty("--glow", state.color);
+    sw.querySelectorAll(".sw").forEach(b => b.setAttribute("aria-pressed", b.dataset.c===state.color));
+    $("#bright").value = state.bright; $("#brightOut").textContent = state.bright+"%";
+    for (const k of Object.keys(DEV)) {
+      document.querySelector(`[data-order=${k}]`).value = state.orders[k];
+      document.querySelector(`[data-link=${k}]`).checked = state.links[k];
+    }
+  }
+  function setColor(c){ state.color = c.toLowerCase(); paint(); targets().forEach(sendColor); save(); }
+
+  $("#color").addEventListener("input", e => setColor(e.target.value));
+  $("#bright").addEventListener("input", e => { state.bright = +e.target.value; paint(); targets().forEach(sendColor); save(); });
+  $("#on").onclick  = () => { targets().forEach(k => { write(k, ON); sendColor(k); }); };
+  $("#off").onclick = () => { targets().forEach(k => write(k, OFF)); };
+  document.querySelectorAll(".connect").forEach(b => b.onclick = () => connect(b.dataset.dev));
+  document.querySelectorAll("[data-order]").forEach(s => s.onchange = () => { state.orders[s.dataset.order]=s.value; sendColor(s.dataset.order); save(); });
+  document.querySelectorAll("[data-link]").forEach(c => c.onchange = () => { state.links[c.dataset.link]=c.checked; save(); });
+
+  paint();
+  log(navigator.bluetooth ? "Close the Magic Lantern and Lotus Lantern apps, then tap Connect on each set." : "");
+})();
+</script>
+</body>
+</html>
