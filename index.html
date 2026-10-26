@@ -55,7 +55,9 @@ input[type=range]{width:100%;accent-color:var(--glow);height:32px}
 .bright{display:flex;gap:10px;align-items:center}
 .bright output{font:600 13px var(--mono);width:44px;text-align:right}
 select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 6px}
-.log{font:400 11px var(--mono);color:var(--muted);min-height:1.4em}
+.log{font:400 11px/1.5 var(--mono);color:var(--muted);min-height:1.4em;white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;max-height:220px;overflow:auto}
+.any{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.any button{padding:6px 10px;font-size:13px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -89,6 +91,10 @@ select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--li
     </div>
   </section>
 
+  <div class="any">Not in the list? Pick from all devices:
+    <button data-any="magic">Magic</button><button data-any="lotus">Lotus</button>
+  </div>
+
   <section class="power" aria-label="Power">
     <button id="on">On</button>
     <button id="off">Off</button>
@@ -118,17 +124,23 @@ select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--li
 (() => {
   const PRESETS = ["#ff2a2a","#ff7a00","#ffd400","#2aff4a","#00d5ff","#2a4bff","#a52aff","#ff2ad0","#ffffff","#ffb46b","#ff5f8a","#7affc8"];
   const ORDERS = {RGB:[0,1,2],GRB:[1,0,2],BRG:[2,0,1],RBG:[0,2,1],GBR:[1,2,0],BGR:[2,1,0]};
+  const U = n => "0000" + n.toString(16).padStart(4,"0") + "-0000-1000-8000-00805f9b34fb";
   const PROFILES = [ // service, write characteristic
-    [0xfff0, 0xfff3],
-    [0xffe0, 0xffe1],
-    [0xffd5, 0xffd9],
+    [U(0xfff0), U(0xfff3)],
+    [U(0xffe0), U(0xffe1)],
+    [U(0xffd5), U(0xffd9)],
   ];
   const DEV = {
     magic:{prefix:["MELK","ELK-BLE"], order:"GRB", link:true},
     lotus:{prefix:["ELK-BLEDOM","ELK"], order:"RGB", link:true},
   };
   const $ = s => document.querySelector(s);
-  const log = m => { $("#log").textContent = m; };
+  const log = m => {
+    const t = new Date().toLocaleTimeString([], {hour12:false});
+    const el = $("#log"); el.textContent = `${t}  ${m}\n` + el.textContent.slice(0, 3000);
+  };
+  window.addEventListener("error", e => log("JS error: " + e.message));
+  window.addEventListener("unhandledrejection", e => log("Error: " + (e.reason && (e.reason.name + ": " + e.reason.message) || e.reason)));
 
   // saved settings (per-browser convenience only)
   let saved = {};
@@ -150,9 +162,15 @@ select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--li
   async function attach(key){
     const d = DEV[key];
     setUI(key,"busy");
-    const server = await d.device.gatt.connect();
+    log(`Picked "${d.device.name}". Connecting…`);
+    const server = await Promise.race([
+      d.device.gatt.connect(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("Timed out connecting. Another app may still be connected to this light. Unplug it for 5 s and retry.")), 12000)),
+    ]);
+    log("Connected. Looking for control channel…");
     for (const [svc, ch] of PROFILES) {
-      try { const s = await server.getPrimaryService(svc); d.char = await s.getCharacteristic(ch); break; } catch {}
+      try { const s = await server.getPrimaryService(svc); d.char = await s.getCharacteristic(ch); log("Using " + svc.slice(4,8).toUpperCase() + "/" + ch.slice(4,8).toUpperCase()); break; }
+      catch (e) { log(`No ${svc.slice(4,8).toUpperCase()}: ${e.name}`); }
     }
     if (!d.char) throw new Error("Connected, but couldn't find the light's control channel.");
     setUI(key,"on");
@@ -161,16 +179,17 @@ select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--li
     sendColor(key);
   }
 
-  async function connect(key){
+  async function connect(key, any){
     const d = DEV[key];
     if (!navigator.bluetooth) { log("Open this page in Bluefy to use Bluetooth."); return; }
     if (d.char) return;
+    if (any) d.device = null;
     try {
       if (!d.device) {
-        d.device = await navigator.bluetooth.requestDevice({
-          filters: d.prefix.map(p => ({namePrefix:p})),
-          optionalServices: PROFILES.map(p => p[0]),
-        });
+        log(any ? "Opening picker (all devices)…" : "Opening picker…");
+        d.device = await navigator.bluetooth.requestDevice(any
+          ? {acceptAllDevices:true, optionalServices: PROFILES.map(p => p[0])}
+          : {filters: d.prefix.map(p => ({namePrefix:p})), optionalServices: PROFILES.map(p => p[0])});
         d.device.addEventListener("gattserverdisconnected", () => {
           d.char = null; setUI(key,"off"); log(`${key==="magic"?"Magic":"Lotus"} Lantern disconnected. Tap Connect to reconnect.`);
         });
@@ -178,17 +197,23 @@ select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--li
       await attach(key);
     } catch (e) {
       setUI(key,"off");
-      if (e && e.name === "NotFoundError") log("No light picked.");
-      else log((e && e.message) || "Couldn't connect. Make sure the official app is fully closed.");
+      d.device = null; d.char = null;
+      log(e && e.name === "NotFoundError" ? "Picker closed with nothing chosen (" + e.message + ")"
+          : "Failed: " + (e ? (e.name + ": " + e.message) : "unknown"));
     }
   }
 
   function write(key, bytes){
     const d = DEV[key];
-    if (!d.char) return;
+    if (!d.char) { log(`${key==="magic"?"Magic":"Lotus"} Lantern isn't connected, command skipped.`); return; }
     const data = new Uint8Array(bytes);
-    d.queue = d.queue.then(() => (d.char.writeValueWithoutResponse
-      ? d.char.writeValueWithoutResponse(data) : d.char.writeValue(data))).catch(() => {});
+    d.queue = d.queue.then(async () => {
+      try { await d.char.writeValue(data); }
+      catch (e1) {
+        try { if (d.char.writeValueWithoutResponse) await d.char.writeValueWithoutResponse(data); else throw e1; }
+        catch (e) { log("Write failed: " + e.name + ": " + e.message); }
+      }
+    });
   }
 
   // throttle so dragging the slider/picker doesn't flood the controller
@@ -246,8 +271,15 @@ select{font:inherit;background:#22252d;color:var(--fg);border:1px solid var(--li
   document.querySelectorAll("[data-order]").forEach(s => s.onchange = () => { state.orders[s.dataset.order]=s.value; sendColor(s.dataset.order); save(); });
   document.querySelectorAll("[data-link]").forEach(c => c.onchange = () => { state.links[c.dataset.link]=c.checked; save(); });
 
+  document.querySelectorAll("[data-any]").forEach(b => b.onclick = () => connect(b.dataset.any, true));
+
   paint();
-  log(navigator.bluetooth ? "Close the Magic Lantern and Lotus Lantern apps, then tap Connect on each set." : "");
+  log("v2 loaded. Browser: " + navigator.userAgent.slice(0, 90));
+  if (!navigator.bluetooth) log("No Bluetooth in this browser. Open the page in Bluefy.");
+  else {
+    log("Bluetooth API found. Close the light apps and nRF Connect, then tap Connect.");
+    if (navigator.bluetooth.getAvailability) navigator.bluetooth.getAvailability().then(a => log("Bluetooth available: " + a)).catch(() => {});
+  }
 })();
 </script>
 </body>
